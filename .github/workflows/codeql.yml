@@ -1,0 +1,82 @@
+# ด่านที่ 3 (ข) — SAST ด้วย CodeQL (เครื่องมือของ GitHub เอง)
+#
+# ทำไมต้องมีทั้ง Semgrep และ CodeQL
+#   - Semgrep เก่งเรื่องกฎที่เขียนเองได้เร็ว อ่านง่าย เหมาะกับ "กติกาของทีม"
+#   - CodeQL แปลงโค้ดทั้งโปรเจกต์เป็นฐานข้อมูลแล้ว query หาเส้นทางของข้อมูล
+#     จึงเก่งเรื่องช่องโหว่ที่ต้องไล่ข้ามหลายไฟล์หลายฟังก์ชัน
+#
+# CodeQL ใช้ฟรีกับ public repository (private repo ต้องมี GitHub Advanced Security)
+# และผลจะขึ้นแท็บ Security ให้เองโดยไม่ต้องอัปโหลด SARIF เอง
+
+name: 3) SAST (CodeQL)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # สแกนซ้ำทุกสัปดาห์ เพราะ "กฎใหม่" ของ CodeQL อาจจับช่องโหว่ในโค้ดเดิมที่เคยผ่านได้
+    - cron: '30 1 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write # จำเป็นสำหรับเขียนผลเข้า Code scanning
+  actions: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: codeql
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # โปรเจกต์ที่มีหลายภาษาให้ใส่เพิ่มในลิสต์นี้ เช่น python, java, go
+        language: ['javascript-typescript']
+
+    steps:
+      - name: เช็คเอาต์โค้ด
+        uses: actions/checkout@v4
+
+      - name: เตรียมฐานข้อมูล CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-extended = ชุดกฎความปลอดภัยที่กว้างกว่าค่าปริยาย
+          # (ถ้ากลัว false positive เยอะ ให้เริ่มจาก default ก่อนแล้วค่อยขยับ)
+          queries: security-extended
+
+      # ภาษาที่ต้องคอมไพล์ (Java, C#, Go, C/C++) ต้องมีขั้นตอน build ตรงนี้
+      # JavaScript/TypeScript ไม่ต้อง แต่ใส่ไว้ให้เห็นว่าโครงสร้างเป็นอย่างไร
+      - name: สร้างโปรเจกต์ (สำหรับภาษาที่ต้องคอมไพล์)
+        uses: github/codeql-action/autobuild@v3
+
+      - name: วิเคราะห์
+        id: analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'
+
+      - name: บันทึกสรุปลงหน้า Summary
+        if: always()
+        run: |
+          {
+            echo "## 🔬 ด่านที่ 3 (ข) — SAST ด้วย CodeQL"
+            echo ""
+            echo "ภาษา: \`${{ matrix.language }}\` · ชุดกฎ: \`security-extended\`"
+            echo ""
+            echo "ผลของ CodeQL ไม่ได้สรุปเป็นตัวเลขในหน้านี้ เพราะ GitHub เก็บผลไว้เป็น **alert**"
+            echo "ที่ติดตามสถานะได้ (open / fixed / dismissed) ดูได้ที่แท็บ **Security → Code scanning**"
+            echo "และในหน้า PR จะมีคอมเมนต์ปักหมุดที่บรรทัดโค้ดให้อัตโนมัติ"
+            echo ""
+            echo "> [!NOTE]"
+            echo "> การบล็อกไม่ให้ merge เมื่อมี alert ระดับสูง ตั้งที่ **ruleset ของ repo**"
+            echo "> (Settings → Rules → Rulesets → Require code scanning results)"
+            echo "> ไม่ได้ตั้งในไฟล์ workflow นี้ ดูรายละเอียดที่ \`docs/06-alerts-and-gates.md\`"
+          } >> "$GITHUB_STEP_SUMMARY"
