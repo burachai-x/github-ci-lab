@@ -63,18 +63,35 @@ git log --reverse --oneline
 
 ### 2. เปิดแท็บ Pull requests — ตัวอย่างที่จงใจทำพังของแต่ละด่าน
 
-| PR                   | จำลองอะไร                                                     | ด่านที่แดง                             |
-| -------------------- | ------------------------------------------------------------- | -------------------------------------- |
-| [#13](../../pull/13) | เผลอ `git add -f .env` และ hardcode โทเคนในซอร์ส              | Secret Scanning                        |
-| [#14](../../pull/14) | endpoint admin ที่มีช่องโหว่ 5 แบบ แต่ผ่าน lint/type/test ครบ | SAST (+ Secret Scanning)               |
-| [#15](../../pull/15) | `npm install lodash@4.17.4 minimist@1.2.0` ตามบทความเก่า      | SCA (+ Container Scanning)             |
-| [#16](../../pull/16) | Dockerfile แบบ "ขอให้รันได้ก่อน" ผิดหลัก 9 ข้อ                | Container Scanning (+ Secret Scanning) |
-| [#17](../../pull/17) | โค้ดที่เขียนตอนใกล้เดดไลน์ ผิดทั้ง 4 ข้อย่อย                  | Code Quality (+ Container Scanning)    |
+| PR                   | จำลองอะไร                                                     | check ที่แดงจริง                                       |
+| -------------------- | ------------------------------------------------------------- | ------------------------------------------------------ |
+| [#13](../../pull/13) | เผลอ `git add -f .env` และ hardcode โทเคนในซอร์ส              | `secret-scan`, `sast`, `Semgrep OSS`                   |
+| [#14](../../pull/14) | endpoint admin ที่มีช่องโหว่ 5 แบบ แต่ผ่าน lint/type/test ครบ | `sast`, `secret-scan`, `Semgrep OSS`, `CodeQL`         |
+| [#15](../../pull/15) | `npm install lodash@4.17.4 minimist@1.2.0` ตามบทความเก่า      | `sca`, `container-scan`, `Trivy`                       |
+| [#16](../../pull/16) | Dockerfile แบบ "ขอให้รันได้ก่อน" ผิดหลัก 9 ข้อ                | `container-scan`, `secret-scan`, `sast`, `Semgrep OSS` |
+| [#17](../../pull/17) | โค้ดที่เขียนตอนใกล้เดดไลน์ ผิดทั้ง 4 ข้อย่อย                  | `quality`, `container-scan`, `ESLint`                  |
 
-สังเกตว่าหลาย PR แดงมากกว่าหนึ่งด่าน — เพราะปัญหาเดียวมักโผล่หลายชั้น
-เช่นโทเคนใน `Dockerfile` โดนจับทั้งจากไฟล์ (Gitleaks) และจากใน image (Trivy)
-หรือโค้ดที่ compile ไม่ผ่านก็ทำให้ `docker build` ล้มไปด้วย
+> ตารางนี้คือผลจริงจากการรัน ไม่ใช่ผลที่คาดไว้ตอนเขียน
+
+สังเกตสองอย่าง
+
+**1. ทุก PR แดงมากกว่าหนึ่งด่าน** เพราะปัญหาเดียวมักโผล่หลายชั้น
+
+- โทเคนใน `Dockerfile` โดนจับทั้งจากไฟล์ (Gitleaks) และจากกฎ hardcoded credential (Semgrep)
+- `lodash` ที่มีช่องโหว่ไม่ได้อยู่แค่ใน `package-lock.json` แต่ถูกแพ็กเข้า image ด้วย Trivy จึงเจอซ้ำ
+- โค้ดที่ `tsc` ไม่ผ่าน ทำให้ `npm run build` ใน Dockerfile ล้ม แล้ว `docker build` พังตามไปด้วย
+
 **การวางด่านซ้อนกันหลายชั้นจึงไม่ใช่ความซ้ำซ้อน แต่คือการเผื่อว่าด่านหนึ่งพลาด**
+
+**2. check ในหน้า PR มีสองชนิดที่มาจากคนละที่**
+
+| ชนิด                  | ตัวอย่าง                                                           | ตั้งที่ไหน                  |
+| --------------------- | ------------------------------------------------------------------ | --------------------------- |
+| ผลของ job ใน workflow | `quality`, `sast`, `sca`, `container-scan`, `secret-scan`          | ไฟล์ใน `.github/workflows/` |
+| ผลของ code scanning   | `Semgrep OSS`, `CodeQL`, `Trivy`, `ESLint`, `Hadolint`, `gitleaks` | **ruleset ของ repo**        |
+
+ชนิดที่สองจะแดงเมื่อมี alert ระดับสูงค้างอยู่ แม้ job จะเขียว — เป็นตาข่ายอีกชั้น
+ที่ตั้งจากหน้า Settings ไม่ใช่จากไฟล์ workflow (ดู `scripts/setup-repo-protection.sh`)
 
 ### 3. ดูช่องทางแจ้งเตือนของจริง
 
