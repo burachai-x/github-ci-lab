@@ -1,0 +1,246 @@
+# ด่านที่ 5 — Container Scanning
+#
+# ตอบคำถามว่า "image ที่กำลังจะเอาขึ้น production มีอะไรไม่ปลอดภัยอยู่ข้างในบ้าง"
+#
+# ต่างจากด่าน SCA ตรงที่ image ไม่ได้มีแค่ dependency ของแอป แต่มี OS ทั้งระบบอยู่ข้างใน
+# ทั้ง openssl, busybox, curl, ca-certificates — ของพวกนี้มี CVE ของตัวเองที่ npm ไม่มีทางเห็น
+#
+# ด่านนี้ตรวจสองเรื่องที่แยกกันชัดเจน
+#   1. Dockerfile เขียนถูกหลักไหม        -> Hadolint
+#   2. ของข้างใน image มีช่องโหว่ไหม      -> Trivy
+
+name: 5) Container Scanning
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: container-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TRIVY_VERSION: 0.74.0
+  HADOLINT_VERSION: 2.15.1
+  IMAGE_NAME: github-ci-lab
+
+jobs:
+  container-scan:
+    name: container-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: เช็คเอาต์โค้ด
+        uses: actions/checkout@v4
+
+      # ---------- 1) ตรวจวิธีเขียน Dockerfile ----------
+      - name: ติดตั้ง Hadolint
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}"
+          curl -sSfL -o hadolint "${BASE}/hadolint-linux-x86_64"
+          curl -sSfL -o hadolint-checksums.txt "${BASE}/checksums.sha256"
+          grep "hadolint-linux-x86_64" hadolint-checksums.txt | sed "s|.*hadolint-linux-x86_64|hadolint|" | sha256sum -c - || \
+            (echo "checksum ไม่ตรง"; exit 1)
+          sudo install -m 0755 hadolint /usr/local/bin/hadolint
+          hadolint --version
+
+      - name: ตรวจ Dockerfile ด้วย Hadolint
+        id: hadolint
+        continue-on-error: true
+        run: |
+          hadolint Dockerfile --format sarif > hadolint.sarif
+          hadolint Dockerfile --format tty
+
+      - name: ส่งผล Hadolint เข้าแท็บ Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: hadolint.sarif
+          category: hadolint
+
+      # ---------- 2) build แล้วตรวจของข้างใน image ----------
+      # build ด้วย tag ที่ผูกกับ commit เพื่อให้รู้ชัดว่ากำลังตรวจ image ของโค้ดชุดไหน
+      - name: build image
+        id: build
+        run: |
+          docker build -t "${IMAGE_NAME}:${GITHUB_SHA}" .
+          docker image inspect "${IMAGE_NAME}:${GITHUB_SHA}" --format 'ขนาด image: {{.Size}} bytes / user ที่ใช้รัน: {{.Config.User}}'
+
+      # ตรวจว่า image รันด้วย root หรือเปล่า — ข้อนี้ไม่ใช่ CVE แต่เป็นเรื่องที่ทำให้
+      # ช่องโหว่ทุกตัวใน container ร้ายแรงขึ้นทันที จึงบังคับเป็นกฎของเราเอง
+      - name: ตรวจว่า image ไม่ได้รันด้วย root
+        id: nonroot
+        continue-on-error: true
+        run: |
+          USER_IN_IMAGE=$(docker image inspect "${IMAGE_NAME}:${GITHUB_SHA}" --format '{{.Config.User}}')
+          echo "user ที่ตั้งไว้ใน image: '${USER_IN_IMAGE}'"
+          if [ -z "${USER_IN_IMAGE}" ] || [ "${USER_IN_IMAGE}" = "root" ] || [ "${USER_IN_IMAGE}" = "0" ]; then
+            echo "::error file=Dockerfile::image นี้รันด้วย root — ต้องเพิ่มคำสั่ง USER ที่ไม่ใช่ root"
+            exit 1
+          fi
+
+      - name: ติดตั้ง Trivy (พร้อมตรวจ checksum)
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          curl -sSfL -o trivy.tar.gz "${BASE}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sSfL -o trivy-checksums.txt "${BASE}/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy-checksums.txt | sed "s|trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz|trivy.tar.gz|" | sha256sum -c -
+          tar -xzf trivy.tar.gz trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
+
+      - name: สแกน image ด้วย Trivy (ออก SARIF)
+        continue-on-error: true
+        run: |
+          trivy image "${IMAGE_NAME}:${GITHUB_SHA}" \
+            --scanners vuln,secret \
+            --format sarif \
+            --output trivy-image.sarif \
+            --ignore-unfixed \
+            --no-progress
+
+      - name: สแกน image ด้วย Trivy (ออก JSON ไว้ทำสรุป)
+        continue-on-error: true
+        run: |
+          trivy image "${IMAGE_NAME}:${GITHUB_SHA}" \
+            --scanners vuln,secret \
+            --format json \
+            --output trivy-image.json \
+            --no-progress
+
+      - name: ส่งผล Trivy เข้าแท็บ Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+      - name: เก็บรายงานไว้เป็น artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-scan-reports
+          path: |
+            hadolint.sarif
+            trivy-image.sarif
+            trivy-image.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: สรุปผลและตัดสินว่าผ่านหรือไม่
+        if: always()
+        run: |
+          set -uo pipefail
+
+          sev() { jq --arg s "$1" '[.Results[]?.Vulnerabilities[]? | select(.Severity == $s)] | length' trivy-image.json 2>/dev/null || echo 0; }
+          sev_fixed() { jq --arg s "$1" '[.Results[]?.Vulnerabilities[]? | select(.Severity == $s and (.FixedVersion // "") != "")] | length' trivy-image.json 2>/dev/null || echo 0; }
+
+          CRIT=$(sev CRITICAL); HIGH=$(sev HIGH); MED=$(sev MEDIUM); LOW=$(sev LOW)
+          CRIT_FIX=$(sev_fixed CRITICAL); HIGH_FIX=$(sev_fixed HIGH)
+          SECRETS=$(jq '[.Results[]?.Secrets[]?] | length' trivy-image.json 2>/dev/null || echo 0)
+          HADOLINT_COUNT=$(jq '[.runs[].results[]] | length' hadolint.sarif 2>/dev/null || echo 0)
+
+          {
+            echo "## 🐳 ด่านที่ 5 — Container Scanning"
+            echo ""
+            echo "### วิธีเขียน Dockerfile (Hadolint)"
+            echo ""
+            if [ "${HADOLINT_COUNT}" -gt 0 ]; then
+              echo "| กฎ | บรรทัด | คำอธิบาย |"
+              echo "|-----|--------|----------|"
+              jq -r '.runs[].results[] | "| `\(.ruleId)` | \(.locations[0].physicalLocation.region.startLine) | \(.message.text | .[0:140]) |"' hadolint.sarif
+            else
+              echo "ไม่พบข้อทักท้วง ✅"
+            fi
+            echo ""
+            echo "### ช่องโหว่ใน image (Trivy)"
+            echo ""
+            echo "| ระดับ | ทั้งหมด | ที่มีแพตช์แล้ว |"
+            echo "|-------|---------|----------------|"
+            echo "| CRITICAL | ${CRIT} | ${CRIT_FIX} |"
+            echo "| HIGH | ${HIGH} | ${HIGH_FIX} |"
+            echo "| MEDIUM | ${MED} | – |"
+            echo "| LOW | ${LOW} | – |"
+            echo ""
+            echo "| ค่าลับที่ฝังอยู่ใน image | ${SECRETS} |"
+            echo "|---|---|"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$((CRIT_FIX + HIGH_FIX))" -gt 0 ]; then
+            {
+              echo "### ช่องโหว่ระดับสูงที่ \"มีแพตช์แล้ว\" (10 รายการแรก)"
+              echo ""
+              echo "| แพ็กเกจ | เวอร์ชันใน image | เวอร์ชันที่แก้แล้ว | ระดับ | CVE |"
+              echo "|---------|------------------|--------------------|-------|-----|"
+              jq -r '[.Results[]?.Vulnerabilities[]?
+                | select((.Severity == "CRITICAL" or .Severity == "HIGH") and (.FixedVersion // "") != "")]
+                | unique_by(.VulnerabilityID)[:10][]
+                | "| `\(.PkgName)` | \(.InstalledVersion) | \(.FixedVersion) | \(.Severity) | [\(.VulnerabilityID)](\(.PrimaryURL // "https://nvd.nist.gov")) |"' trivy-image.json
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          FAILED=0
+
+          if [ "${{ steps.nonroot.outcome }}" != "success" ]; then
+            {
+              echo "> [!CAUTION]"
+              echo "> **image รันด้วย root** — ถ้ามีใครหลุดเข้ามาใน container ได้ จะได้สิทธิ์สูงสุดทันที"
+              echo "> แก้ด้วยการเพิ่ม \`USER node\` (หรือ user อื่นที่ไม่ใช่ root) ใน Dockerfile"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+            FAILED=1
+          fi
+
+          if [ "${SECRETS}" -gt 0 ]; then
+            {
+              echo "> [!CAUTION]"
+              echo "> **เจอค่าลับฝังอยู่ใน image** — ทุกคนที่ pull image ไปได้ จะอ่านค่านั้นได้"
+              echo "> ค่าลับต้องส่งตอน runtime ผ่าน environment variable หรือ secret manager เท่านั้น"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+            FAILED=1
+          fi
+
+          # นโยบายเรื่องช่องโหว่: บล็อกเฉพาะตัวที่ "มีแพตช์ให้แก้แล้ว"
+          # ตัวที่ยังไม่มีแพตช์ (unfixed) บล็อกไปก็แก้อะไรไม่ได้ กลายเป็นแค่การขวางงาน
+          if [ "$((CRIT_FIX + HIGH_FIX))" -gt 0 ]; then
+            {
+              echo "> [!CAUTION]"
+              echo "> พบช่องโหว่ระดับ HIGH/CRITICAL ที่ **มีเวอร์ชันแก้แล้ว** จำนวน $((CRIT_FIX + HIGH_FIX)) รายการ"
+              echo ""
+              echo "วิธีแก้ตามลำดับ"
+              echo "1. อัป base image เป็นเวอร์ชันใหม่ (ส่วนใหญ่แก้ได้ด้วยข้อนี้ข้อเดียว)"
+              echo "2. เพิ่มคำสั่งอัปเดตแพ็กเกจของระบบในขั้นตอน build"
+              echo "3. เปลี่ยนไปใช้ base image ที่เล็กลง (alpine / distroless) เพราะของน้อย ช่องโหว่ก็น้อย"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+            FAILED=1
+          fi
+
+          if [ "${{ steps.hadolint.outcome }}" != "success" ]; then
+            {
+              echo "> [!WARNING]"
+              echo "> Hadolint มีข้อทักท้วงเรื่องวิธีเขียน Dockerfile — ดูตารางด้านบน"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+            FAILED=1
+          fi
+
+          if [ "${FAILED}" -eq 1 ]; then
+            exit 1
+          fi
+
+          echo "> [!TIP]" >> "$GITHUB_STEP_SUMMARY"
+          echo "> image ผ่านเกณฑ์ทั้งเรื่องวิธีเขียน Dockerfile และช่องโหว่ที่มีแพตช์แล้ว ✅" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,16 @@
+# คอนฟิกของ Hadolint (ตัวตรวจวิธีเขียน Dockerfile)
+
+# ระดับที่ถือว่า "ไม่ผ่าน": warning ขึ้นไป
+# ข้อความระดับ info/style ยังแสดงให้เห็นในรายงาน แต่ไม่ทำให้ CI แดง
+failure-threshold: warning
+
+ignored:
+  # DL3066 แนะนำให้ใส่ USER เป็นตัวเลข uid แทนชื่อ
+  # เราเลือกใช้ชื่อ "node" เพราะอ่านแล้วเข้าใจทันทีว่าเป็น user ที่ image ของ Node.js เตรียมไว้ให้
+  # (uid ของ user นี้คือ 1000 ซึ่งตรงกับที่ Kubernetes ใช้เป็น runAsUser ได้อยู่แล้ว)
+  - DL3066
+
+trustedRegistries:
+  # อนุญาตให้ FROM ดึง image จากที่ไหนได้บ้าง — กันการเผลออ้าง registry ที่ไม่รู้จัก
+  - docker.io
+  - ghcr.io
