@@ -42,7 +42,7 @@ jobs:
 
     steps:
       - name: เช็คเอาต์โค้ด
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: เตรียมฐานข้อมูล CodeQL
         uses: github/codeql-action/init@v3

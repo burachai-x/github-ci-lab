@@ -41,7 +41,7 @@ jobs:
 
     steps:
       - name: เช็คเอาต์โค้ด
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # ---------- 1) ตรวจวิธีเขียน Dockerfile ----------
       - name: ติดตั้ง Hadolint
@@ -50,8 +50,9 @@ jobs:
           BASE="https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}"
           curl -sSfL -o hadolint "${BASE}/hadolint-linux-x86_64"
           curl -sSfL -o hadolint-checksums.txt "${BASE}/checksums.sha256"
-          grep "hadolint-linux-x86_64" hadolint-checksums.txt | sed "s|.*hadolint-linux-x86_64|hadolint|" | sha256sum -c - || \
-            (echo "checksum ไม่ตรง"; exit 1)
+          # ไฟล์ checksum ของ hadolint เขียนในรูปแบบ "<hash> *ชื่อไฟล์"
+          # จึงต้องแทนที่เฉพาะส่วนชื่อไฟล์ (ที่มี * นำหน้า) ให้ตรงกับชื่อที่เราโหลดมา
+          grep "hadolint-linux-x86_64" hadolint-checksums.txt | sed "s|\*hadolint-linux-x86_64|hadolint|" | sha256sum -c -
           sudo install -m 0755 hadolint /usr/local/bin/hadolint
           hadolint --version
 
@@ -128,7 +129,7 @@ jobs:
 
       - name: เก็บรายงานไว้เป็น artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: container-scan-reports
           path: |

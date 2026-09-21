@@ -41,7 +41,7 @@ jobs:
 
     steps:
       - name: รวบรวม alert แล้วอัปเดต Issue
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const ISSUE_TITLE = '🔐 สรุป alert ความปลอดภัยที่ยังค้างอยู่บน main';

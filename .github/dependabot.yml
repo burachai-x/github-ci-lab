@@ -56,3 +56,9 @@ updates:
     labels:
       - dependencies
       - docker
+    ignore:
+      # เราตั้งใจอยู่บน Node.js สาย LTS เท่านั้น จึงไม่รับข้อเสนออัปข้ามเวอร์ชันใหญ่
+      # (การ "ไม่รับ" ต้องเขียนเป็นกติกาไว้แบบนี้ ไม่ใช่ปิด PR ทิ้งเงียบ ๆ ทุกสัปดาห์)
+      - dependency-name: node
+        update-types:
+          - version-update:semver-major
