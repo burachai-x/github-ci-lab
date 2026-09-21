@@ -1,0 +1,164 @@
+# เปลี่ยน "alert ที่ค้างอยู่" ให้กลายเป็น "งานที่มีเจ้าของ"
+#
+# ปัญหาที่พบบ่อย: ทีมเปิดการสแกนครบทุกด่าน ผลขึ้นแท็บ Security เรียบร้อย
+# แล้วก็ไม่มีใครเปิดดูอีกเลย เพราะแท็บนั้นไม่ได้อยู่ในเส้นทางการทำงานประจำวันของใคร
+#
+# workflow นี้จึงดึง alert ที่ยังเปิดค้างอยู่บน main มาสรุปเป็น GitHub Issue หนึ่งใบ
+# ที่อัปเดตตัวเองทุกวัน — มอบหมายคนได้ ใส่ milestone ได้ ปิดได้เมื่อแก้หมด
+
+name: 6) แจ้งเตือนเป็น Issue
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # ทุกวัน 10:00 น. เวลาไทย
+  # รันต่อท้ายให้อัตโนมัติเมื่อด่านตรวจบน main ทำงานเสร็จ
+  workflow_run:
+    workflows:
+      - 2) Secret Scanning
+      - 3) SAST (Semgrep)
+      - 3) SAST (CodeQL)
+      - 4) SCA (Dependencies)
+      - 5) Container Scanning
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  security-events: read
+
+concurrency:
+  # กันไม่ให้หลาย run มาสร้าง issue ซ้อนกันตอน workflow หลายตัวเสร็จพร้อม ๆ กัน
+  group: security-issues
+  cancel-in-progress: false
+
+jobs:
+  sync-issue:
+    name: security-issue-sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: รวบรวม alert แล้วอัปเดต Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const ISSUE_TITLE = '🔐 สรุป alert ความปลอดภัยที่ยังค้างอยู่บน main';
+            const MARKER = '<!-- ci-lab-security-digest -->';
+            const LABELS = ['security', 'automated'];
+
+            // ---- 1) ดึง alert ที่ยังเปิดอยู่ทั้งหมด (ทุกเครื่องมือที่อัปโหลด SARIF เข้ามา) ----
+            let alerts = [];
+            try {
+              alerts = await github.paginate(github.rest.codeScanning.listAlertsForRepo, {
+                ...context.repo,
+                state: 'open',
+                ref: 'refs/heads/main',
+                per_page: 100,
+              });
+            } catch (error) {
+              core.warning(`อ่าน code scanning alert ไม่ได้ (${error.message})`);
+              core.warning('สาเหตุที่พบบ่อย: repo เป็น private โดยไม่มี GitHub Advanced Security หรือยังไม่เคยมีการอัปโหลดผลสแกน');
+              return;
+            }
+
+            const rank = { critical: 0, high: 1, medium: 2, low: 3, warning: 4, note: 5, error: 1 };
+            const sevOf = (a) =>
+              a.rule?.security_severity_level || a.rule?.severity || 'note';
+
+            alerts.sort((a, b) => (rank[sevOf(a)] ?? 9) - (rank[sevOf(b)] ?? 9));
+
+            const blocking = alerts.filter((a) => ['critical', 'high'].includes(sevOf(a)));
+
+            // ---- 2) หา issue เดิมที่ workflow นี้เคยสร้างไว้ ----
+            const existingIssues = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo,
+              state: 'open',
+              labels: LABELS.join(','),
+              per_page: 100,
+            });
+            const existing = existingIssues.find((i) => i.body && i.body.includes(MARKER));
+
+            // ---- 3) ไม่มี alert ค้าง = ปิดงานให้เรียบร้อย ----
+            if (alerts.length === 0) {
+              if (existing) {
+                await github.rest.issues.createComment({
+                  ...context.repo,
+                  issue_number: existing.number,
+                  body: `✅ ตรวจล่าสุดเมื่อ ${new Date().toISOString()} ไม่พบ alert ที่ยังเปิดค้างอยู่บน \`main\` แล้ว — ปิด issue นี้อัตโนมัติ`,
+                });
+                await github.rest.issues.update({ ...context.repo, issue_number: existing.number, state: 'closed' });
+                core.info('ไม่มี alert ค้าง — ปิด issue เดิมแล้ว');
+              } else {
+                core.info('ไม่มี alert ค้าง และไม่มี issue เดิม — ไม่ต้องทำอะไร');
+              }
+              return;
+            }
+
+            // ---- 4) ประกอบเนื้อหา issue ----
+            const byTool = {};
+            for (const a of alerts) {
+              const tool = a.tool?.name || 'ไม่ทราบเครื่องมือ';
+              (byTool[tool] ||= []).push(a);
+            }
+
+            const lines = [
+              MARKER,
+              `> อัปเดตอัตโนมัติเมื่อ ${new Date().toISOString()} · สาเหตุที่รัน: \`${context.eventName}\``,
+              '',
+              `พบ alert ที่ยังเปิดค้างอยู่บน \`main\` ทั้งหมด **${alerts.length}** รายการ`,
+              `โดยเป็นระดับ high/critical จำนวน **${blocking.length}** รายการ`,
+              '',
+              '## สรุปตามเครื่องมือ',
+              '',
+              '| เครื่องมือ | จำนวน |',
+              '|-----------|-------|',
+              ...Object.entries(byTool).map(([tool, list]) => `| ${tool} | ${list.length} |`),
+              '',
+              '## รายการที่ต้องจัดการก่อน (high / critical)',
+              '',
+            ];
+
+            if (blocking.length === 0) {
+              lines.push('ไม่มีรายการระดับ high/critical ค้างอยู่ 🎉', '');
+            } else {
+              lines.push(
+                '| ระดับ | เครื่องมือ | กฎ | ไฟล์ | ลิงก์ |',
+                '|-------|-----------|-----|------|-------|',
+                ...blocking.slice(0, 30).map((a) => {
+                  const loc = a.most_recent_instance?.location;
+                  const where = loc ? `\`${loc.path}:${loc.start_line}\`` : '–';
+                  return `| ${sevOf(a)} | ${a.tool?.name ?? '–'} | \`${a.rule?.id ?? '–'}\` | ${where} | [#${a.number}](${a.html_url}) |`;
+                }),
+                '',
+              );
+              if (blocking.length > 30) {
+                lines.push(`_และอีก ${blocking.length - 30} รายการ — ดูทั้งหมดในแท็บ Security_`, '');
+              }
+            }
+
+            lines.push(
+              '## ทำอย่างไรต่อ',
+              '',
+              '1. เปิดแท็บ **Security → Code scanning** เพื่อดูรายละเอียดและโค้ดรอบ ๆ จุดที่แจ้ง',
+              '2. แก้ที่ต้นเหตุ แล้ว alert จะปิดตัวเองเมื่อ merge เข้า `main`',
+              '3. ถ้าเป็น false positive ให้กด **Dismiss** พร้อมระบุเหตุผล — อย่าปล่อยค้างไว้เฉย ๆ',
+              '4. ถ้ายังแก้ไม่ได้ตอนนี้ ให้มอบหมายเจ้าของและใส่ milestone เพื่อให้มีกำหนดตามงาน',
+              '',
+              `<sub>issue นี้ถูกสร้างและอัปเดตโดย workflow [\`security-issues.yml\`](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/blob/main/.github/workflows/security-issues.yml) — แก้เนื้อหาเองได้ แต่จะถูกเขียนทับในรอบถัดไป</sub>`,
+            );
+
+            const body = lines.join('\n');
+
+            // ---- 5) อัปเดตของเดิม หรือสร้างใหม่ถ้ายังไม่มี ----
+            if (existing) {
+              await github.rest.issues.update({ ...context.repo, issue_number: existing.number, title: ISSUE_TITLE, body });
+              core.info(`อัปเดต issue #${existing.number}`);
+              core.summary.addRaw(`อัปเดต [issue #${existing.number}](${existing.html_url}) แล้ว (${alerts.length} alert)`);
+            } else {
+              const created = await github.rest.issues.create({ ...context.repo, title: ISSUE_TITLE, body, labels: LABELS });
+              core.info(`สร้าง issue #${created.data.number}`);
+              core.summary.addRaw(`สร้าง [issue #${created.data.number}](${created.data.html_url}) แล้ว (${alerts.length} alert)`);
+            }
+            await core.summary.write();
