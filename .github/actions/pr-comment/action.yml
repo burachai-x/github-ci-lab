@@ -26,12 +26,18 @@ runs:
   using: composite
   steps:
     - uses: actions/github-script@v9
+      # ส่งค่า input ผ่าน env แทนการแทรก ${{ }} ลงไปในตัว script โดยตรง
+      # เพราะการแทรกค่าลงในโค้ดคือช่องทาง script injection แบบเดียวกับ SQL injection
+      # (ด่าน SAST ของ repo นี้เองเป็นคนจับข้อนี้ได้ — ดู docs/03-sast.md)
+      env:
+        REPORT_KEY: ${{ inputs.key }}
+        REPORT_FILE: ${{ inputs['report-file'] }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
           const fs = require('fs');
-          const key = ${{ toJSON(inputs.key) }};
-          const file = ${{ toJSON(inputs['report-file']) }};
+          const key = process.env.REPORT_KEY;
+          const file = process.env.REPORT_FILE;
 
           if (!context.payload.pull_request) {
             core.info('ไม่ได้อยู่ในบริบทของ Pull Request — ข้ามการคอมเมนต์');

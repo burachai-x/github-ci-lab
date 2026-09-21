@@ -19,6 +19,10 @@ updates:
       time: '09:00'
       timezone: Asia/Bangkok
     open-pull-requests-limit: 5
+    # รอให้เวอร์ชันใหม่ "นิ่ง" ก่อนค่อยเสนออัป
+    # กันกรณีแพ็กเกจถูกยึดบัญชีแล้วปล่อยเวอร์ชันมุ่งร้าย ซึ่งมักถูกจับได้และถอนออกภายในไม่กี่วัน
+    cooldown:
+      default-days: 7
     # จัดกลุ่มการอัปเดตเล็ก ๆ ให้มารวมใน PR เดียว
     # ไม่งั้นเช้าวันจันทร์จะมี PR โผล่มา 15 ใบจนไม่มีใครอยากรีวิว
     groups:
@@ -42,6 +46,8 @@ updates:
       interval: weekly
       day: monday
       timezone: Asia/Bangkok
+    cooldown:
+      default-days: 7
     labels:
       - dependencies
       - github-actions
@@ -53,6 +59,8 @@ updates:
       interval: weekly
       day: monday
       timezone: Asia/Bangkok
+    cooldown:
+      default-days: 7
     labels:
       - dependencies
       - docker

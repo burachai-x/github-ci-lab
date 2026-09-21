@@ -86,6 +86,33 @@ jobs:
       #   level = error   -> บล็อกการ merge
       #   level = warning -> รายงานให้รู้ แต่ยังไปต่อได้
       # แยกแบบนี้เพื่อไม่ให้ทีมชินกับการเห็น CI แดงจนเลิกสนใจ
+      # ---------------------------------------------------------------------
+      # แปลง SARIF ให้อยู่ในรูปที่นับง่าย
+      #
+      # กับดักที่เจอจริงในแล็บนี้: SARIF ของ Semgrep ไม่ได้ใส่ฟิลด์ "level" ไว้ในผลแต่ละรายการ
+      # แต่ไปประกาศไว้ที่นิยามของกฎ (tool.driver.rules[].defaultConfiguration.level) แทน
+      # การนับด้วย `select(.level == "error")` ตรง ๆ จึงได้ศูนย์เสมอ — ด่านนี้เคยเขียวทั้งที่ควรแดง
+      # ---------------------------------------------------------------------
+      - name: แปลงผล SARIF ให้นับได้
+        if: always()
+        run: |
+          set -uo pipefail
+          if [ ! -f semgrep.sarif ]; then
+            echo '[]' > findings.json
+            exit 0
+          fi
+          jq '[ .runs[] as $run
+            | (($run.tool.driver.rules // []) + (($run.tool.extensions // []) | map(.rules // []) | add // [])) as $rules
+            | $run.results[]
+            | . as $res
+            | { level: ( $res.level
+                         // ([$rules[] | select(.id == $res.ruleId) | .defaultConfiguration.level] | first)
+                         // "warning" ),
+                ruleId: ($res.ruleId | split(".") | last),
+                uri: $res.locations[0].physicalLocation.artifactLocation.uri,
+                line: $res.locations[0].physicalLocation.region.startLine,
+                text: ($res.message.text | split("\n")[0] | .[0:120]) } ]' semgrep.sarif > findings.json
+
       - name: สรุปผลและตัดสินตามระดับความรุนแรง
         if: always()
         run: |
@@ -95,9 +122,10 @@ jobs:
             exit 1
           fi
 
-          ERRORS=$(jq '[.runs[].results[] | select(.level == "error")] | length' semgrep.sarif)
-          WARNINGS=$(jq '[.runs[].results[] | select(.level == "warning")] | length' semgrep.sarif)
-          NOTES=$(jq '[.runs[].results[] | select(.level == "note")] | length' semgrep.sarif)
+          count() { jq --arg l "$1" '[.[] | select(.level == $l)] | length' findings.json; }
+          ERRORS=$(count error)
+          WARNINGS=$(count warning)
+          NOTES=$(count note)
 
           {
             echo "## 🛡️ ด่านที่ 3 — SAST (Semgrep)"
@@ -110,20 +138,32 @@ jobs:
             echo ""
           } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "$((ERRORS + WARNINGS))" -gt 0 ]; then
+          if [ "${ERRORS}" -gt 0 ]; then
             {
-              echo "### รายการที่เจอ"
+              echo "### ต้องแก้ก่อน merge (error)"
               echo ""
-              echo "| ระดับ | ไฟล์:บรรทัด | กฎ | คำอธิบาย |"
-              echo "|-------|-------------|-----|----------|"
-              jq -r '.runs[].results[]
-                | select(.level != "note")
-                | "| \(.level) | `\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)` | `\(.ruleId | split(".") | last)` | \(.message.text | split("\n")[0] | .[0:120]) |"' semgrep.sarif
-              echo ""
-              echo "ดูรายละเอียดพร้อมโค้ดรอบ ๆ ได้ที่แท็บ **Security → Code scanning** (หมวด \`semgrep\`)"
+              echo "| ไฟล์:บรรทัด | กฎ | คำอธิบาย |"
+              echo "|-------------|-----|----------|"
+              jq -r '.[] | select(.level == "error") | "| `\(.uri):\(.line)` | `\(.ruleId)` | \(.text) |"' findings.json | head -25
               echo ""
             } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
           fi
+
+          if [ "${WARNINGS}" -gt 0 ]; then
+            {
+              echo "<details><summary>รายการระดับ warning ${WARNINGS} รายการ (ไม่บล็อก — กดเพื่อดู 10 รายการแรก)</summary>"
+              echo ""
+              echo "| ไฟล์:บรรทัด | กฎ |"
+              echo "|-------------|-----|"
+              jq -r '.[] | select(.level == "warning") | "| `\(.uri):\(.line)` | `\(.ruleId)` |"' findings.json | head -10
+              echo ""
+              echo "</details>"
+              echo ""
+            } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "ดูรายละเอียดพร้อมโค้ดรอบ ๆ ได้ที่แท็บ **Security → Code scanning** (หมวด \`semgrep\`)" | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
+          echo "" | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
 
           if [ "${ERRORS}" -gt 0 ]; then
             {

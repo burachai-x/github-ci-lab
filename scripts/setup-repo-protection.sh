@@ -43,6 +43,10 @@ create_label docker          "1d76db" "เกี่ยวกับ container / D
 #   - ถ้ามี code scanning alert ระดับสูงค้างอยู่ ให้บล็อกการ merge
 #
 # หมายเหตุ: ชื่อใน required_status_checks ต้องตรงกับชื่อ "job" ไม่ใช่ชื่อ workflow
+#
+# ⚠️ bypass_actors ข้างล่างเปิดให้ "Repository admin" (actor_id 5) ข้ามกฎได้
+#    เพราะ repo สอนนี้มีผู้ดูแลคนเดียว จึงไม่มีใครมากด approve ให้
+#    **ในทีมจริงให้ลบส่วน bypass_actors ทิ้ง** ไม่งั้นกฎที่ตั้งไว้จะมีค่าเท่ากับคำแนะนำ
 # ---------------------------------------------------------------------------
 RULESET_NAME="ด่านตรวจโค้ดก่อนเข้า main"
 
@@ -51,6 +55,13 @@ RULESET_PAYLOAD=$(cat <<'JSON'
   "name": "RULESET_NAME_PLACEHOLDER",
   "target": "branch",
   "enforcement": "active",
+  "bypass_actors": [
+    {
+      "actor_id": 5,
+      "actor_type": "RepositoryRole",
+      "bypass_mode": "always"
+    }
+  ],
   "conditions": {
     "ref_name": {
       "include": ["refs/heads/main"],
