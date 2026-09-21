@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write # ใช้คอมเมนต์สรุปผลลงใน PR
   security-events: write
 
 concurrency:
@@ -128,7 +129,7 @@ jobs:
             echo "| production เท่านั้น | ${PROD_CRIT} | ${PROD_HIGH} | – | – | **บล็อกถ้ามี high ขึ้นไป** |"
             echo "| ทั้งหมด (รวม dev) | ${ALL_CRIT} | ${ALL_HIGH} | ${ALL_MOD} | ${ALL_LOW} | รายงานอย่างเดียว |"
             echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
 
           if [ -s audit-prod.json ] && [ "$((PROD_CRIT + PROD_HIGH))" -gt 0 ]; then
             {
@@ -140,7 +141,7 @@ jobs:
                 | select(.value.severity == "critical" or .value.severity == "high")
                 | "| `\(.key)` | \(.value.severity) | \((.value.via[] | if type == "object" then .title else empty end) // "ดูรายละเอียดใน advisory") | \(if .value.fixAvailable == false then "ยังไม่มีแพตช์" elif (.value.fixAvailable | type) == "object" then "อัปเป็น \(.value.fixAvailable.name)@\(.value.fixAvailable.version)" else "npm audit fix" end) |"' audit-prod.json | sort -u
               echo ""
-            } >> "$GITHUB_STEP_SUMMARY"
+            } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
           if [ "$((PROD_CRIT + PROD_HIGH))" -gt 0 ]; then
@@ -155,7 +156,7 @@ jobs:
               echo "3. ถ้ายังไม่มีแพตช์: ประเมินว่าโค้ดเราเรียกใช้ส่วนที่มีช่องโหว่จริงไหม"
               echo "   แล้วบันทึกการยอมรับความเสี่ยงไว้เป็นลายลักษณ์อักษรพร้อมวันที่ทบทวน"
               echo ""
-            } >> "$GITHUB_STEP_SUMMARY"
+            } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
 
@@ -164,9 +165,16 @@ jobs:
               echo "> [!WARNING]"
               echo "> มีช่องโหว่ระดับสูงใน devDependency — ไม่บล็อกการ merge เพราะไม่ได้ขึ้น production"
               echo "> แต่ควรตามอัปเดต เพราะเครื่องของ dev และ runner ของ CI ก็เป็นเป้าโจมตีได้"
-            } >> "$GITHUB_STEP_SUMMARY"
+            } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          echo "> [!TIP]" >> "$GITHUB_STEP_SUMMARY"
-          echo "> ไม่พบช่องโหว่ที่ต้องจัดการใน dependency ✅" >> "$GITHUB_STEP_SUMMARY"
+          echo "> [!TIP]" | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
+          echo "> ไม่พบช่องโหว่ที่ต้องจัดการใน dependency ✅" | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: คอมเมนต์สรุปผลลงใน Pull Request
+        if: always() && github.event_name == 'pull_request'
+        uses: ./.github/actions/pr-comment
+        with:
+          key: sca
+          report-file: report.md

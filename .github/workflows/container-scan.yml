@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write # ใช้คอมเมนต์สรุปผลลงใน PR
   security-events: write
 
 concurrency:
@@ -175,7 +176,7 @@ jobs:
             echo "| ค่าลับที่ฝังอยู่ใน image | ${SECRETS} |"
             echo "|---|---|"
             echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$((CRIT_FIX + HIGH_FIX))" -gt 0 ]; then
             {
@@ -188,7 +189,7 @@ jobs:
                 | unique_by(.VulnerabilityID)[:10][]
                 | "| `\(.PkgName)` | \(.InstalledVersion) | \(.FixedVersion) | \(.Severity) | [\(.VulnerabilityID)](\(.PrimaryURL // "https://nvd.nist.gov")) |"' trivy-image.json
               echo ""
-            } >> "$GITHUB_STEP_SUMMARY"
+            } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
           FAILED=0
@@ -199,7 +200,7 @@ jobs:
               echo "> **image รันด้วย root** — ถ้ามีใครหลุดเข้ามาใน container ได้ จะได้สิทธิ์สูงสุดทันที"
               echo "> แก้ด้วยการเพิ่ม \`USER node\` (หรือ user อื่นที่ไม่ใช่ root) ใน Dockerfile"
               echo ""
-            } >> "$GITHUB_STEP_SUMMARY"
+            } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
             FAILED=1
           fi
 
@@ -209,7 +210,7 @@ jobs:
               echo "> **เจอค่าลับฝังอยู่ใน image** — ทุกคนที่ pull image ไปได้ จะอ่านค่านั้นได้"
               echo "> ค่าลับต้องส่งตอน runtime ผ่าน environment variable หรือ secret manager เท่านั้น"
               echo ""
-            } >> "$GITHUB_STEP_SUMMARY"
+            } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
             FAILED=1
           fi
 
@@ -225,7 +226,7 @@ jobs:
               echo "2. เพิ่มคำสั่งอัปเดตแพ็กเกจของระบบในขั้นตอน build"
               echo "3. เปลี่ยนไปใช้ base image ที่เล็กลง (alpine / distroless) เพราะของน้อย ช่องโหว่ก็น้อย"
               echo ""
-            } >> "$GITHUB_STEP_SUMMARY"
+            } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
             FAILED=1
           fi
 
@@ -234,7 +235,7 @@ jobs:
               echo "> [!WARNING]"
               echo "> Hadolint มีข้อทักท้วงเรื่องวิธีเขียน Dockerfile — ดูตารางด้านบน"
               echo ""
-            } >> "$GITHUB_STEP_SUMMARY"
+            } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
             FAILED=1
           fi
 
@@ -242,5 +243,12 @@ jobs:
             exit 1
           fi
 
-          echo "> [!TIP]" >> "$GITHUB_STEP_SUMMARY"
-          echo "> image ผ่านเกณฑ์ทั้งเรื่องวิธีเขียน Dockerfile และช่องโหว่ที่มีแพตช์แล้ว ✅" >> "$GITHUB_STEP_SUMMARY"
+          echo "> [!TIP]" | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
+          echo "> image ผ่านเกณฑ์ทั้งเรื่องวิธีเขียน Dockerfile และช่องโหว่ที่มีแพตช์แล้ว ✅" | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: คอมเมนต์สรุปผลลงใน Pull Request
+        if: always() && github.event_name == 'pull_request'
+        uses: ./.github/actions/pr-comment
+        with:
+          key: container-scan
+          report-file: report.md

@@ -17,6 +17,7 @@ on:
 # ให้สิทธิ์เท่าที่จำเป็น (principle of least privilege)
 permissions:
   contents: read
+  pull-requests: write # ใช้คอมเมนต์สรุปผลลงใน PR
   security-events: write # ใช้ตอนอัปโหลดผล ESLint เข้าแท็บ Security
 
 # ถ้า push ซ้ำเข้ามาที่ ref เดิม ให้ยกเลิก run เก่าทิ้ง ประหยัดเวลาและโควตา
@@ -97,7 +98,7 @@ jobs:
             echo "| ชนิดข้อมูล | tsc --noEmit | $(status "${{ steps.typecheck.outcome }}") |"
             echo "| unit test | Vitest | $(status "${{ steps.test.outcome }}") |"
             echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
 
           if [ "${{ steps.format.outcome }}" != "success" ] \
             || [ "${{ steps.lint.outcome }}" != "success" ] \
@@ -114,9 +115,16 @@ jobs:
               echo "npm run typecheck"
               echo "npm test"
               echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
+            } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
 
-          echo "> [!TIP]" >> "$GITHUB_STEP_SUMMARY"
-          echo "> ผ่านครบทุกข้อ 🎉" >> "$GITHUB_STEP_SUMMARY"
+          echo "> [!TIP]" | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
+          echo "> ผ่านครบทุกข้อ 🎉" | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: คอมเมนต์สรุปผลลงใน Pull Request
+        if: always() && github.event_name == 'pull_request'
+        uses: ./.github/actions/pr-comment
+        with:
+          key: quality
+          report-file: report.md
