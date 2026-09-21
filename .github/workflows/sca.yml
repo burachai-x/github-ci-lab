@@ -1,0 +1,172 @@
+# ด่านที่ 4 — SCA (Software Composition Analysis)
+#
+# ตอบคำถามว่า "ไลบรารีที่เราหยิบมาใช้ มีช่องโหว่ที่ประกาศ CVE ไว้แล้วหรือเปล่า"
+#
+# ทำไมสำคัญ: โค้ดในโปรเจกต์ JavaScript ทั่วไปเป็นโค้ดที่เราเขียนเองไม่ถึง 5%
+# ที่เหลือคือของที่ npm ดึงมาให้ ช่องโหว่ส่วนใหญ่จึงไม่ได้อยู่ในโค้ดเรา
+# แต่อยู่ใน dependency ชั้นที่สาม สี่ ห้า ที่เราไม่เคยรู้จักชื่อด้วยซ้ำ
+
+name: 4) SCA (Dependencies)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # ตรวจซ้ำทุกวัน เพราะ CVE ใหม่ถูกประกาศทุกวัน ทั้งที่โค้ดเราไม่ได้เปลี่ยนเลย
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: sca-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TRIVY_VERSION: 0.74.0
+
+jobs:
+  sca:
+    name: sca
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: เช็คเอาต์โค้ด
+        uses: actions/checkout@v4
+
+      - name: ติดตั้ง Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: ติดตั้ง dependency
+        run: npm ci
+
+      # ---- เกณฑ์บล็อก: เฉพาะ dependency ที่ไปอยู่บน production ----
+      # เหตุผล: ช่องโหว่ใน devDependency (เช่นตัวรัน test) ไม่ได้ถูก deploy ออกไป
+      # ความเสี่ยงคนละระดับกับไลบรารีที่รันรับ request จริง จึงไม่ควรใช้เกณฑ์เดียวกัน
+      - name: ตรวจ dependency ของ production
+        id: audit_prod
+        continue-on-error: true
+        run: |
+          npm audit --omit=dev --audit-level=high --json > audit-prod.json || true
+          npm audit --omit=dev --audit-level=high
+
+      # ---- ส่วนที่รายงานอย่างเดียว: รวม devDependency ด้วย ----
+      - name: ตรวจ dependency ทั้งหมด (รวมฝั่ง dev)
+        id: audit_all
+        continue-on-error: true
+        run: npm audit --json > audit-all.json || true
+
+      - name: ติดตั้ง Trivy (พร้อมตรวจ checksum)
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          curl -sSfL -o trivy.tar.gz "${BASE}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sSfL -o trivy-checksums.txt "${BASE}/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy-checksums.txt | sed "s|trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz|trivy.tar.gz|" | sha256sum -c -
+          tar -xzf trivy.tar.gz trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
+          trivy --version
+
+      # Trivy อ่าน package-lock.json โดยตรง จึงเห็น dependency ทุกชั้น (transitive)
+      # และให้ผลในรูปแบบ SARIF ที่เอาขึ้นแท็บ Security ได้
+      - name: สแกน dependency ด้วย Trivy
+        continue-on-error: true
+        run: |
+          trivy fs . \
+            --scanners vuln \
+            --skip-dirs node_modules \
+            --skip-dirs graft \
+            --format sarif \
+            --output trivy-deps.sarif \
+            --severity LOW,MEDIUM,HIGH,CRITICAL \
+            --no-progress
+
+      - name: ส่งผลเข้าแท็บ Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-deps.sarif
+          category: trivy-dependencies
+
+      - name: เก็บรายงานไว้เป็น artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sca-reports
+          path: |
+            audit-prod.json
+            audit-all.json
+            trivy-deps.sarif
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: สรุปผลและตัดสินว่าผ่านหรือไม่
+        if: always()
+        run: |
+          set -uo pipefail
+          count() { jq -r --arg s "$2" '.metadata.vulnerabilities[$s] // 0' "$1" 2>/dev/null || echo 0; }
+
+          PROD_CRIT=$(count audit-prod.json critical)
+          PROD_HIGH=$(count audit-prod.json high)
+          ALL_CRIT=$(count audit-all.json critical)
+          ALL_HIGH=$(count audit-all.json high)
+          ALL_MOD=$(count audit-all.json moderate)
+          ALL_LOW=$(count audit-all.json low)
+
+          {
+            echo "## 📦 ด่านที่ 4 — SCA (ช่องโหว่ใน dependency)"
+            echo ""
+            echo "| ขอบเขต | critical | high | moderate | low | นโยบาย |"
+            echo "|--------|----------|------|----------|-----|--------|"
+            echo "| production เท่านั้น | ${PROD_CRIT} | ${PROD_HIGH} | – | – | **บล็อกถ้ามี high ขึ้นไป** |"
+            echo "| ทั้งหมด (รวม dev) | ${ALL_CRIT} | ${ALL_HIGH} | ${ALL_MOD} | ${ALL_LOW} | รายงานอย่างเดียว |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -s audit-prod.json ] && [ "$((PROD_CRIT + PROD_HIGH))" -gt 0 ]; then
+            {
+              echo "### แพ็กเกจฝั่ง production ที่ต้องแก้"
+              echo ""
+              echo "| แพ็กเกจ | ระดับ | ปัญหา | แก้อย่างไร |"
+              echo "|---------|-------|-------|------------|"
+              jq -r '.vulnerabilities | to_entries[]
+                | select(.value.severity == "critical" or .value.severity == "high")
+                | "| `\(.key)` | \(.value.severity) | \((.value.via[] | if type == "object" then .title else empty end) // "ดูรายละเอียดใน advisory") | \(if .value.fixAvailable == false then "ยังไม่มีแพตช์" elif (.value.fixAvailable | type) == "object" then "อัปเป็น \(.value.fixAvailable.name)@\(.value.fixAvailable.version)" else "npm audit fix" end) |"' audit-prod.json | sort -u
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$((PROD_CRIT + PROD_HIGH))" -gt 0 ]; then
+            {
+              echo "> [!CAUTION]"
+              echo "> พบช่องโหว่ระดับ high/critical ใน dependency ที่ถูก deploy ขึ้น production"
+              echo ""
+              echo "ทางเลือกในการแก้ เรียงจากดีที่สุด"
+              echo ""
+              echo "1. \`npm audit fix\` หรืออัปเวอร์ชันแพ็กเกจนั้นตรง ๆ"
+              echo "2. ถ้าติดที่ dependency ชั้นลึก ใช้ \`overrides\` ใน package.json บังคับเวอร์ชัน"
+              echo "3. ถ้ายังไม่มีแพตช์: ประเมินว่าโค้ดเราเรียกใช้ส่วนที่มีช่องโหว่จริงไหม"
+              echo "   แล้วบันทึกการยอมรับความเสี่ยงไว้เป็นลายลักษณ์อักษรพร้อมวันที่ทบทวน"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          if [ "$((ALL_CRIT + ALL_HIGH))" -gt 0 ]; then
+            {
+              echo "> [!WARNING]"
+              echo "> มีช่องโหว่ระดับสูงใน devDependency — ไม่บล็อกการ merge เพราะไม่ได้ขึ้น production"
+              echo "> แต่ควรตามอัปเดต เพราะเครื่องของ dev และ runner ของ CI ก็เป็นเป้าโจมตีได้"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "> [!TIP]" >> "$GITHUB_STEP_SUMMARY"
+          echo "> ไม่พบช่องโหว่ที่ต้องจัดการใน dependency ✅" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,58 @@
+# Dependabot — ผู้ช่วยฝั่ง SCA ที่ GitHub ให้มาฟรี
+#
+# ต่างจาก workflow สแกนตรงที่ Dependabot ไม่ได้แค่ "บอกว่ามีปัญหา"
+# แต่ "เปิด Pull Request พร้อมเวอร์ชันใหม่มาให้เลย" ซึ่งลดแรงเสียดทานในการอัปเดตได้มาก
+#
+# เปิดเพิ่มเติมที่ Settings → Code security
+#   - Dependabot alerts          = แจ้งเตือนเมื่อมี CVE ใหม่ตรงกับ dependency ที่ใช้อยู่
+#   - Dependabot security updates = เปิด PR แก้ให้อัตโนมัติเมื่อมีแพตช์
+
+version: 2
+
+updates:
+  # ---- แพ็กเกจ npm ----
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Bangkok
+    open-pull-requests-limit: 5
+    # จัดกลุ่มการอัปเดตเล็ก ๆ ให้มารวมใน PR เดียว
+    # ไม่งั้นเช้าวันจันทร์จะมี PR โผล่มา 15 ใบจนไม่มีใครอยากรีวิว
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+      production-patches:
+        dependency-type: production
+        update-types: [patch]
+    labels:
+      - dependencies
+    commit-message:
+      prefix: 'deps'
+      prefix-development: 'deps(dev)'
+
+  # ---- version ของ GitHub Actions ที่ใช้ใน workflow ----
+  # ข้อนี้คนมักลืม ทั้งที่ action คือโค้ดของคนอื่นที่เรารันด้วยสิทธิ์ของ repo เรา
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Bangkok
+    labels:
+      - dependencies
+      - github-actions
+
+  # ---- base image ใน Dockerfile ----
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Bangkok
+    labels:
+      - dependencies
+      - docker
