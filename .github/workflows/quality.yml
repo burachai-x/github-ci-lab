@@ -1,0 +1,122 @@
+# ด่านที่ 1 — Code Quality & Formatting
+#
+# ตอบคำถามว่า "โค้ดชุดนี้อ่านรู้เรื่อง ฟอร์แมตตรงกันทั้งทีม คอมไพล์ผ่าน และเทสผ่านไหม"
+# เป็นด่านที่ควรเปิดใช้เป็นด่านแรกเสมอ เพราะไม่มีใครเถียงและทำให้ทีมคุ้นกับการที่ CI แดง
+#
+# จุดสำคัญของไฟล์นี้: เราตั้งใจ "รันให้ครบทุกขั้นก่อน แล้วค่อยตัดสินผลรวมทีเดียว"
+# แทนที่จะหยุดที่ error แรก เพื่อให้คนเขียนโค้ดเห็นปัญหาทั้งหมดในรอบเดียว ไม่ต้อง push แก้ทีละรอบ
+
+name: 1) Code Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch: # กดรันเองจากหน้าเว็บได้
+
+# ให้สิทธิ์เท่าที่จำเป็น (principle of least privilege)
+permissions:
+  contents: read
+  security-events: write # ใช้ตอนอัปโหลดผล ESLint เข้าแท็บ Security
+
+# ถ้า push ซ้ำเข้ามาที่ ref เดิม ให้ยกเลิก run เก่าทิ้ง ประหยัดเวลาและโควตา
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: เช็คเอาต์โค้ด
+        uses: actions/checkout@v4
+
+      - name: ติดตั้ง Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm # cache ~/.npm ตาม hash ของ package-lock.json
+
+      # npm ci ต่างจาก npm install ตรงที่ติดตั้งตาม package-lock.json แบบเป๊ะ ๆ
+      # และล้มถ้า lock ไม่ตรงกับ package.json — เป็นสิ่งที่เราต้องการใน CI
+      - name: ติดตั้ง dependency
+        run: npm ci
+
+      # ตั้งแต่ตรงนี้ใช้ continue-on-error เพื่อให้รันครบทุกด่านย่อย
+      # แล้วไปสรุปผล/ตัดสินว่าจะแดงหรือเขียวที่ step สุดท้าย
+      - name: ตรวจฟอร์แมตด้วย Prettier
+        id: format
+        continue-on-error: true
+        run: npm run format:check
+
+      - name: ตรวจคุณภาพโค้ดด้วย ESLint
+        id: lint
+        continue-on-error: true
+        run: npm run lint
+
+      # รัน ESLint ซ้ำเพื่อออกไฟล์ SARIF — SARIF คือรูปแบบมาตรฐานกลางสำหรับ "ผลการตรวจโค้ด"
+      # ที่ GitHub เอาไปแสดงเป็น alert ในแท็บ Security ได้ ไม่ว่าจะมาจากเครื่องมือยี่ห้อไหน
+      - name: แปลงผล ESLint เป็น SARIF
+        if: always()
+        run: npx eslint . --format @microsoft/eslint-formatter-sarif --output-file eslint.sarif || true
+
+      - name: ตรวจชนิดข้อมูลด้วย TypeScript
+        id: typecheck
+        continue-on-error: true
+        run: npm run typecheck
+
+      - name: รัน unit test
+        id: test
+        continue-on-error: true
+        run: npm test
+
+      - name: ส่งผล ESLint เข้าแท็บ Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: eslint.sarif
+          category: eslint # แยกหมวดไม่ให้ทับกับผลของเครื่องมืออื่น
+
+      # เขียนตารางสรุปลงหน้า Summary ของ workflow run
+      # ($GITHUB_STEP_SUMMARY รับ Markdown ตรง ๆ)
+      - name: สรุปผลและตัดสินว่าผ่านหรือไม่
+        if: always()
+        run: |
+          status() { [ "$1" = "success" ] && echo "✅ ผ่าน" || echo "❌ ไม่ผ่าน"; }
+
+          {
+            echo "## 🧹 ด่านที่ 1 — Code Quality & Formatting"
+            echo ""
+            echo "| การตรวจ | เครื่องมือ | ผล |"
+            echo "|---------|-----------|-----|"
+            echo "| ฟอร์แมตโค้ด | Prettier | $(status "${{ steps.format.outcome }}") |"
+            echo "| คุณภาพ/รูปแบบการเขียน | ESLint | $(status "${{ steps.lint.outcome }}") |"
+            echo "| ชนิดข้อมูล | tsc --noEmit | $(status "${{ steps.typecheck.outcome }}") |"
+            echo "| unit test | Vitest | $(status "${{ steps.test.outcome }}") |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${{ steps.format.outcome }}" != "success" ] \
+            || [ "${{ steps.lint.outcome }}" != "success" ] \
+            || [ "${{ steps.typecheck.outcome }}" != "success" ] \
+            || [ "${{ steps.test.outcome }}" != "success" ]; then
+            {
+              echo "> [!CAUTION]"
+              echo "> ด่านนี้เป็น **required check** — แก้ให้ผ่านก่อนถึงจะ merge ได้"
+              echo ""
+              echo "แก้ในเครื่องด้วยคำสั่ง:"
+              echo '```bash'
+              echo "npm run format   # จัดฟอร์แมตให้อัตโนมัติ"
+              echo "npm run lint     # ดูรายการที่ ESLint ติง"
+              echo "npm run typecheck"
+              echo "npm test"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          echo "> [!TIP]" >> "$GITHUB_STEP_SUMMARY"
+          echo "> ผ่านครบทุกข้อ 🎉" >> "$GITHUB_STEP_SUMMARY"
