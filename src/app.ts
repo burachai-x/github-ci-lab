@@ -1,5 +1,6 @@
 import express, { type Express } from 'express';
 import { createTaskRouter } from './routes/tasks.js';
+import { createAdminRouter } from './routes/admin.js';
 import { TaskStore } from './lib/store.js';
 
 export function createApp(store: TaskStore = new TaskStore()): Express {
@@ -12,6 +13,7 @@ export function createApp(store: TaskStore = new TaskStore()): Express {
   });
 
   app.use('/api/tasks', createTaskRouter(store));
+  app.use('/api/admin', createAdminRouter());
 
   return app;
 }
