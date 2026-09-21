@@ -55,3 +55,44 @@ rules:
       - pattern-not: const $NAME = ""
       - pattern-not-inside: |
           process.env.$ANY
+
+  - id: gbtech-path-from-user-input
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      นำค่าที่รับมาจากผู้ใช้ไปประกอบเป็น path ของไฟล์โดยตรง (path traversal)
+      ผู้ใช้ส่ง ../../etc/passwd มาอ่านไฟล์นอกโฟลเดอร์ที่ตั้งใจได้
+      ให้ตรวจชื่อไฟล์ด้วย allowlist หรือ path.basename() ก่อนเสมอ
+    metadata:
+      category: security
+      cwe: 'CWE-22: Improper Limitation of a Pathname to a Restricted Directory'
+      owasp: 'A01:2021 - Broken Access Control'
+      confidence: MEDIUM
+    mode: taint
+    pattern-sources:
+      - pattern: $REQ.query
+      - pattern: $REQ.params
+      - pattern: $REQ.body
+    pattern-sinks:
+      - pattern: path.join(...)
+      - pattern: path.resolve(...)
+      - pattern: readFileSync(...)
+      - pattern: readFile(...)
+      - pattern: createReadStream(...)
+
+  - id: gbtech-weak-hash-algorithm
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      ใช้อัลกอริทึม hash ที่ถือว่าอ่อนแล้ว (MD5/SHA1) กับข้อมูลที่ต้องการความปลอดภัย
+      สำหรับรหัสผ่านให้ใช้ bcrypt/argon2 ส่วนงานตรวจความถูกต้องของข้อมูลให้ใช้ SHA-256 ขึ้นไป
+    metadata:
+      category: security
+      cwe: 'CWE-327: Use of a Broken or Risky Cryptographic Algorithm'
+      owasp: 'A02:2021 - Cryptographic Failures'
+      confidence: HIGH
+    pattern-either:
+      - pattern: createHash("md5")
+      - pattern: createHash("sha1")
+      - pattern: $CRYPTO.createHash("md5")
+      - pattern: $CRYPTO.createHash("sha1")

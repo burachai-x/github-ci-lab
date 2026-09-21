@@ -7,7 +7,9 @@ export interface ValidationResult<T> {
 const TITLE_MAX_LENGTH = 200;
 const OWNER_PATTERN = /^[a-z0-9._-]{3,40}$/i;
 
-export function validateTaskInput(body: unknown): ValidationResult<{ title: string; owner: string }> {
+export function validateTaskInput(
+  body: unknown,
+): ValidationResult<{ title: string; owner: string }> {
   const errors: string[] = [];
 
   if (typeof body !== 'object' || body === null) {
@@ -30,5 +32,9 @@ export function validateTaskInput(body: unknown): ValidationResult<{ title: stri
     return { ok: false, errors };
   }
 
-  return { ok: true, value: { title: (title as string).trim(), owner: owner as string }, errors: [] };
+  return {
+    ok: true,
+    value: { title: (title as string).trim(), owner: owner as string },
+    errors: [],
+  };
 }
