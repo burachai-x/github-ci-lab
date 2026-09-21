@@ -129,6 +129,9 @@ jobs:
 
       - name: เก็บรายงานไว้เป็น artifact
         if: always()
+        # การเก็บ artifact เป็นของแถมไว้ดูย้อนหลัง ไม่ใช่ตัวตัดสินว่าโค้ดผ่านหรือไม่
+        # ถ้าพื้นที่เก็บเต็มหรือบริการมีปัญหา ต้องไม่ทำให้ "ผลการตรวจ" เปลี่ยนไปด้วย
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: container-scan-reports
@@ -137,7 +140,7 @@ jobs:
             trivy-image.sarif
             trivy-image.json
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 3
 
       - name: สรุปผลและตัดสินว่าผ่านหรือไม่
         if: always()
