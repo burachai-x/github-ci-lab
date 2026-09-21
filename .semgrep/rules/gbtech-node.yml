@@ -1,0 +1,57 @@
+# กฎ SAST ที่เขียนเองสำหรับข้อตกลงภายในทีม
+#
+# กฎสำเร็จรูปจาก registry ครอบคลุมช่องโหว่ที่รู้จักกันทั่วไปอยู่แล้ว
+# ส่วนไฟล์นี้ไว้ใส่ "กติกาของบ้านเรา" ที่เครื่องมือภายนอกไม่มีทางรู้
+rules:
+  - id: gbtech-exec-with-interpolation
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      ห้ามประกอบคำสั่ง shell ด้วยการแทรกตัวแปร (command injection)
+      ให้ใช้ execFile/spawn แล้วส่ง argument เป็น array แทน
+    metadata:
+      category: security
+      cwe: 'CWE-78: OS Command Injection'
+      owasp: 'A03:2021 - Injection'
+      confidence: HIGH
+    patterns:
+      - pattern-either:
+          - pattern: $CP.exec(`...${$X}...`, ...)
+          - pattern: $CP.execSync(`...${$X}...`, ...)
+          - pattern: $CP.exec($A + $B, ...)
+          - pattern: $CP.execSync($A + $B, ...)
+
+  - id: gbtech-response-without-status-guard
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      ส่ง error object ของระบบกลับไปให้ผู้ใช้โดยตรง เสี่ยงหลุดข้อมูลภายใน
+      (ชื่อไฟล์, โครงสร้างฐานข้อมูล, stack trace) ให้ส่งข้อความที่สรุปแล้วแทน
+    metadata:
+      category: security
+      cwe: 'CWE-209: Generation of Error Message Containing Sensitive Information'
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: '$RES.json({..., error: $ERR.stack, ...})'
+      - pattern: $RES.send($ERR.stack)
+
+  - id: gbtech-hardcoded-credential-in-source
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      พบค่าที่ดูเหมือนรหัสผ่าน/โทเคนเขียนติดอยู่ในซอร์ส
+      ให้ย้ายไปอ่านจาก process.env แล้วเก็บค่าจริงไว้ใน secret manager
+    metadata:
+      category: security
+      cwe: 'CWE-798: Use of Hard-coded Credentials'
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: const $NAME = "..."
+          - pattern: let $NAME = "..."
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: (?i).*(password|passwd|secret|api_?key|token|credential).*
+      - pattern-not: const $NAME = ""
+      - pattern-not-inside: |
+          process.env.$ANY

@@ -1,0 +1,147 @@
+# ด่านที่ 3 (ก) — SAST ด้วย Semgrep
+#
+# SAST = Static Application Security Testing = อ่านโค้ด "ที่เราเขียนเอง" หาช่องโหว่
+# โดยไม่ต้องรันโปรแกรม เช่น SQL injection, command injection, path traversal,
+# การใช้อัลกอริทึมเข้ารหัสที่อ่อน, การปิดการตรวจ certificate
+#
+# ต่างจาก ESLint ตรงที่ Semgrep ไล่ตาม "ทางเดินของข้อมูล" (dataflow) ได้
+# จึงตอบได้ว่า input จากผู้ใช้เดินทางไปโผล่ในคำสั่ง shell หรือ query จริงหรือไม่
+
+name: 3) SAST (Semgrep)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: sast-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SEMGREP_VERSION: 1.157.0
+
+jobs:
+  semgrep:
+    name: sast
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: เช็คเอาต์โค้ด
+        uses: actions/checkout@v4
+
+      - name: ติดตั้ง Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: ติดตั้ง Semgrep (ตรึงเวอร์ชัน)
+        run: pip install --quiet "semgrep==${SEMGREP_VERSION}"
+
+      # ชุดกฎที่ใช้
+      #   .semgrep/rules   = กฎที่ทีมเราเขียนเอง (กติกาของบ้านเรา)
+      #   p/typescript     = กฎสำเร็จรูปสำหรับ TypeScript
+      #   p/nodejs         = กฎเฉพาะของ Node.js
+      #   p/owasp-top-ten  = กฎที่อิง OWASP Top 10
+      #
+      # ไม่ใช้ --config auto เพราะอยากให้ชุดกฎ "คงที่และอ่านออกได้" ว่ามีอะไรบ้าง
+      - name: สแกนด้วย Semgrep
+        continue-on-error: true
+        run: |
+          semgrep scan \
+            --config .semgrep/rules \
+            --config p/typescript \
+            --config p/nodejs \
+            --config p/owasp-top-ten \
+            --sarif --output semgrep.sarif \
+            --metrics=off \
+            --no-git-ignore \
+            --exclude node_modules --exclude dist --exclude graft \
+            --quiet
+
+      - name: ส่งผลเข้าแท็บ Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: เก็บรายงานไว้เป็น artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-sarif
+          path: semgrep.sarif
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # นโยบายของ repo นี้
+      #   level = error   -> บล็อกการ merge
+      #   level = warning -> รายงานให้รู้ แต่ยังไปต่อได้
+      # แยกแบบนี้เพื่อไม่ให้ทีมชินกับการเห็น CI แดงจนเลิกสนใจ
+      - name: สรุปผลและตัดสินตามระดับความรุนแรง
+        if: always()
+        run: |
+          set -uo pipefail
+          if [ ! -f semgrep.sarif ]; then
+            echo "❌ Semgrep ไม่ได้ออกรายงาน — ถือว่าด่านนี้ไม่ผ่าน" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          ERRORS=$(jq '[.runs[].results[] | select(.level == "error")] | length' semgrep.sarif)
+          WARNINGS=$(jq '[.runs[].results[] | select(.level == "warning")] | length' semgrep.sarif)
+          NOTES=$(jq '[.runs[].results[] | select(.level == "note")] | length' semgrep.sarif)
+
+          {
+            echo "## 🛡️ ด่านที่ 3 — SAST (Semgrep)"
+            echo ""
+            echo "| ระดับ | จำนวน | นโยบาย |"
+            echo "|-------|-------|--------|"
+            echo "| error | ${ERRORS} | บล็อกการ merge |"
+            echo "| warning | ${WARNINGS} | รายงานอย่างเดียว |"
+            echo "| note | ${NOTES} | รายงานอย่างเดียว |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$((ERRORS + WARNINGS))" -gt 0 ]; then
+            {
+              echo "### รายการที่เจอ"
+              echo ""
+              echo "| ระดับ | ไฟล์:บรรทัด | กฎ | คำอธิบาย |"
+              echo "|-------|-------------|-----|----------|"
+              jq -r '.runs[].results[]
+                | select(.level != "note")
+                | "| \(.level) | `\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)` | `\(.ruleId | split(".") | last)` | \(.message.text | split("\n")[0] | .[0:120]) |"' semgrep.sarif
+              echo ""
+              echo "ดูรายละเอียดพร้อมโค้ดรอบ ๆ ได้ที่แท็บ **Security → Code scanning** (หมวด \`semgrep\`)"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "${ERRORS}" -gt 0 ]; then
+            {
+              echo "> [!CAUTION]"
+              echo "> พบช่องโหว่ระดับ **error** จำนวน ${ERRORS} จุด — ต้องแก้ก่อน merge"
+              echo ""
+              echo "ถ้ามั่นใจว่าเป็น false positive ให้เขียนคอมเมนต์กำกับบรรทัดนั้น"
+              echo '```ts'
+              echo "// nosemgrep: rule-id  -- เหตุผลที่ยกเว้น และใครเป็นคนอนุมัติ"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          if [ "${WARNINGS}" -gt 0 ]; then
+            echo "> [!WARNING]" >> "$GITHUB_STEP_SUMMARY"
+            echo "> มี warning ${WARNINGS} จุด ไม่บล็อกการ merge แต่ควรตามเก็บ" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "> [!TIP]" >> "$GITHUB_STEP_SUMMARY"
+          echo "> ไม่พบช่องโหว่จากการวิเคราะห์โค้ดแบบสถิต ✅" >> "$GITHUB_STEP_SUMMARY"
