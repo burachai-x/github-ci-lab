@@ -63,15 +63,18 @@ git log --reverse --oneline
 
 ### 2. เปิดแท็บ Pull requests — ตัวอย่างที่จงใจทำพังของแต่ละด่าน
 
-| PR                   | จำลองอะไร                                                     | check ที่แดงจริง                                       |
-| -------------------- | ------------------------------------------------------------- | ------------------------------------------------------ |
-| [#13](../../pull/13) | เผลอ `git add -f .env` และ hardcode โทเคนในซอร์ส              | `secret-scan`, `sast`, `Semgrep OSS`                   |
-| [#14](../../pull/14) | endpoint admin ที่มีช่องโหว่ 5 แบบ แต่ผ่าน lint/type/test ครบ | `sast`, `secret-scan`, `Semgrep OSS`, `CodeQL`         |
-| [#15](../../pull/15) | `npm install lodash@4.17.4 minimist@1.2.0` ตามบทความเก่า      | `sca`, `container-scan`, `Trivy`                       |
-| [#16](../../pull/16) | Dockerfile แบบ "ขอให้รันได้ก่อน" ผิดหลัก 9 ข้อ                | `container-scan`, `secret-scan`, `sast`, `Semgrep OSS` |
-| [#17](../../pull/17) | โค้ดที่เขียนตอนใกล้เดดไลน์ ผิดทั้ง 4 ข้อย่อย                  | `quality`, `container-scan`, `ESLint`                  |
+| PR                 | จำลองอะไร                                                     | check ที่แดงจริง                                       |
+| ------------------ | ------------------------------------------------------------- | ------------------------------------------------------ |
+| [#1](../../pull/1) | เผลอ `git add -f .env` และ hardcode โทเคนในซอร์ส              | `secret-scan`, `sast`, `Semgrep OSS`                   |
+| [#2](../../pull/2) | endpoint admin ที่มีช่องโหว่ 5 แบบ แต่ผ่าน lint/type/test ครบ | `sast`, `secret-scan`, `Semgrep OSS`, `CodeQL`         |
+| [#3](../../pull/3) | `npm install lodash@4.17.4 minimist@1.2.0` ตามบทความเก่า      | `sca`, `container-scan`, `Trivy`                       |
+| [#4](../../pull/4) | Dockerfile แบบ "ขอให้รันได้ก่อน" ผิดหลัก 9 ข้อ                | `container-scan`, `secret-scan`, `sast`, `Semgrep OSS` |
+| [#5](../../pull/5) | โค้ดที่เขียนตอนใกล้เดดไลน์ ผิดทั้ง 4 ข้อย่อย                  | `quality`, `container-scan`, `ESLint`                  |
 
 > ตารางนี้คือผลจริงจากการรัน ไม่ใช่ผลที่คาดไว้ตอนเขียน
+>
+> PR ทั้งห้าใบตั้งเป็น **Draft** ไว้โดยตั้งใจ ไม่ใช่งานที่ทำค้าง — เพราะ GitHub จะปิดปุ่ม merge ให้เอง
+> จึงกันไม่ให้ใครเผลอรวมโค้ดที่มีช่องโหว่กับค่าลับตัวอย่างเข้า `main` แต่ยังรัน CI และแสดงผลครบเหมือน PR ปกติ
 
 สังเกตสองอย่าง
 
@@ -97,7 +100,7 @@ git log --reverse --oneline
 
 - **คอมเมนต์ของบอต** ในแต่ละ PR ข้างบน (ตารางสรุปพร้อมวิธีแก้)
 - **แท็บ [Security → Code scanning](../../security/code-scanning)** — alert จาก 6 เครื่องมือแยกตามหมวด
-- **[Issue #1](../../issues/1)** — สรุป alert ที่ค้างบน `main` ที่อัปเดตตัวเองทุกวันและปิดตัวเองเมื่อแก้หมด
+- **[Issue สรุป alert](../../issues?q=is%3Aissue+label%3Asecurity)** — รวม alert ที่ค้างบน `main` อัปเดตตัวเองทุกวันและปิดตัวเองเมื่อแก้หมด
 - **[Ruleset](../../rules)** — กฎที่ทำให้ merge ไม่ได้ถ้าด่านไหนแดง
 
 ### 4. รันในเครื่องก่อน push
