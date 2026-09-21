@@ -1,0 +1,16 @@
+# CODEOWNERS — ใครต้องถูกดึงมารีวิวเมื่อมีการแก้ไฟล์ไหน
+#
+# GitHub จะเพิ่มคนที่ระบุไว้เป็น reviewer ให้อัตโนมัติเมื่อ PR แตะไฟล์ที่ตรงกับ pattern
+# ใช้คู่กับกฎ "require code owner review" ใน ruleset เพื่อบังคับให้เจ้าของจริงได้ดูก่อน merge
+#
+# ในงานจริงควรใส่เป็นชื่อทีม (@org/team-name) ไม่ใช่ชื่อคน เพราะคนลาออกได้แต่ทีมยังอยู่
+
+# ค่าเริ่มต้นของทุกไฟล์
+* @burachai-x
+
+# ของที่แตะแล้วกระทบทั้งระบบ ควรให้คนดูแล pipeline ดูทุกครั้ง
+/.github/           @burachai-x
+/.gitleaks.toml     @burachai-x
+/.semgrep/          @burachai-x
+/Dockerfile         @burachai-x
+/scripts/           @burachai-x
