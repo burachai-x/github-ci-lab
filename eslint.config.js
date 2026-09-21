@@ -32,6 +32,17 @@ export default tseslint.config(
     },
   },
   {
+    // จุดเริ่มโปรแกรมเป็นที่เดียวที่อนุญาตให้พิมพ์ออกหน้าจอได้
+    //
+    // ทำเป็นข้อยกเว้นเชิงนโยบายใน config แทนการใส่ // eslint-disable-next-line ในโค้ด
+    // เพราะรายงาน SARIF จะนับ disable comment เป็น alert ที่ยังเปิดอยู่ในแท็บ Security
+    // (ทำให้มีของค้างที่ไม่มีใครกล้าปิด) ส่วนข้อยกเว้นใน config อ่านได้ชัดว่าเป็นการตัดสินใจของทีม
+    files: ['src/index.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
     // ไฟล์เทสผ่อนกฎบางข้อได้ เพราะบริบทต่างจากโค้ด production
     files: ['src/__tests__/**/*.ts'],
     rules: {

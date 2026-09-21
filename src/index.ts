@@ -5,6 +5,5 @@ const config = loadConfig();
 const app = createApp();
 
 app.listen(config.port, () => {
-  // eslint-disable-next-line no-console
   console.log(`task service ฟังอยู่ที่พอร์ต ${config.port} (${config.environment})`);
 });

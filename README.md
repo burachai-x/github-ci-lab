@@ -37,16 +37,79 @@ repo นี้เป็นตัวอย่างสำหรับทีมพ
 
 ## วิธีเดินดู repo นี้
 
-ไล่ดู commit จากล่างขึ้นบน (`git log --reverse --oneline`) จะเห็นว่า pipeline ถูกประกอบขึ้นทีละด่าน
-จากนั้นเปิดแท็บ Pull requests เพื่อดูตัวอย่าง PR ที่จงใจทำพังของแต่ละด่าน
+### 1. ไล่ดู commit จากล่างขึ้นบน — pipeline ถูกประกอบทีละด่าน
 
-รันในเครื่องก่อน push:
+```bash
+git log --reverse --oneline
+```
+
+| commit                 | เพิ่มอะไรเข้ามา                                             |
+| ---------------------- | ----------------------------------------------------------- |
+| `chore(app)`           | แอปตัวอย่างที่สะอาด ผ่านทุกเกณฑ์ตั้งแต่ต้น                  |
+| `docs`                 | หลักการของ CI ฝั่งตรวจโค้ด                                  |
+| `ci(quality)`          | ด่านที่ 1 — ESLint + Prettier + tsc + Vitest                |
+| `ci(secrets)`          | ด่านที่ 2 — Gitleaks + กฎที่เขียนเองสำหรับโทเคนภายใน        |
+| `ci(sast)`             | ด่านที่ 3 — Semgrep แล้วตามด้วย CodeQL                      |
+| `ci(sca)`              | ด่านที่ 4 — npm audit + Trivy + Dependabot                  |
+| `ci(container)`        | ด่านที่ 5 — Hadolint + Trivy + กฎห้ามรันด้วย root           |
+| `ci(report)`           | รวมการรายงานเป็นคอมเมนต์ใน PR ที่แก้ของเดิมแทนการสร้างใหม่  |
+| `ci(alerts)`           | เปลี่ยน alert เป็น Issue ที่มีเจ้าของ + สคริปต์ตั้ง ruleset |
+| `chore(policy)`        | CODEOWNERS + แม่แบบ PR                                      |
+| `ci: แก้ checksum...`  | **บทเรียนจากของจริง** — ด่านหนึ่งพังเพราะ `sed` เขียนผิด    |
+| `ci(sast): แก้บั๊ก...` | **บทเรียนจากของจริง** — ด่าน SAST เขียวทั้งที่ควรแดง        |
+
+สอง commit สุดท้ายคือของที่มีค่าที่สุดใน repo นี้ เพราะมันคือสิ่งที่เกิดขึ้นจริงเวลาตั้ง pipeline
+ไม่ใช่ตัวอย่างที่เตรียมมาให้สวยงาม
+
+### 2. เปิดแท็บ Pull requests — ตัวอย่างที่จงใจทำพังของแต่ละด่าน
+
+| PR                   | จำลองอะไร                                                     | ด่านที่แดง                             |
+| -------------------- | ------------------------------------------------------------- | -------------------------------------- |
+| [#13](../../pull/13) | เผลอ `git add -f .env` และ hardcode โทเคนในซอร์ส              | Secret Scanning                        |
+| [#14](../../pull/14) | endpoint admin ที่มีช่องโหว่ 5 แบบ แต่ผ่าน lint/type/test ครบ | SAST (+ Secret Scanning)               |
+| [#15](../../pull/15) | `npm install lodash@4.17.4 minimist@1.2.0` ตามบทความเก่า      | SCA (+ Container Scanning)             |
+| [#16](../../pull/16) | Dockerfile แบบ "ขอให้รันได้ก่อน" ผิดหลัก 9 ข้อ                | Container Scanning (+ Secret Scanning) |
+| [#17](../../pull/17) | โค้ดที่เขียนตอนใกล้เดดไลน์ ผิดทั้ง 4 ข้อย่อย                  | Code Quality (+ Container Scanning)    |
+
+สังเกตว่าหลาย PR แดงมากกว่าหนึ่งด่าน — เพราะปัญหาเดียวมักโผล่หลายชั้น
+เช่นโทเคนใน `Dockerfile` โดนจับทั้งจากไฟล์ (Gitleaks) และจากใน image (Trivy)
+หรือโค้ดที่ compile ไม่ผ่านก็ทำให้ `docker build` ล้มไปด้วย
+**การวางด่านซ้อนกันหลายชั้นจึงไม่ใช่ความซ้ำซ้อน แต่คือการเผื่อว่าด่านหนึ่งพลาด**
+
+### 3. ดูช่องทางแจ้งเตือนของจริง
+
+- **คอมเมนต์ของบอต** ในแต่ละ PR ข้างบน (ตารางสรุปพร้อมวิธีแก้)
+- **แท็บ [Security → Code scanning](../../security/code-scanning)** — alert จาก 6 เครื่องมือแยกตามหมวด
+- **[Issue #1](../../issues/1)** — สรุป alert ที่ค้างบน `main` ที่อัปเดตตัวเองทุกวันและปิดตัวเองเมื่อแก้หมด
+- **[Ruleset](../../rules)** — กฎที่ทำให้ merge ไม่ได้ถ้าด่านไหนแดง
+
+### 4. รันในเครื่องก่อน push
 
 ```bash
 npm ci
-npm run lint && npm run format:check && npm run typecheck && npm test
+npm run format:check && npm run lint && npm run typecheck && npm test
 ```
+
+## เอาไปใช้กับโปรเจกต์จริง
+
+1. คัดลอก `.github/workflows/` `.gitleaks.toml` `.semgrep/` `.hadolint.yaml` ไปวาง
+2. แก้ชื่อ job ใน `scripts/setup-repo-protection.sh` ให้ตรงกับของตัวเอง แล้วรัน
+3. **ลบ `bypass_actors` ออกจากสคริปต์** — repo นี้ใส่ไว้เพราะมีผู้ดูแลคนเดียว
+4. เปิด Secret scanning / Push protection / Dependabot ใน Settings → Code security
+5. ทดสอบด้วยการสร้าง PR ที่จงใจทำผิด เพื่อพิสูจน์ว่าทุกด่าน "แดงได้จริง"
+
+ข้อ 5 สำคัญกว่าที่คิด — ดู `docs/03-sast.md` หัวข้อ "ด่านที่ไม่เคยแดง อาจเป็นด่านที่เสีย"
 
 ## รายละเอียดแต่ละด่าน
 
 อยู่ในโฟลเดอร์ [`docs/`](docs/) — อ่านเรียงตามหมายเลขไฟล์ได้เลย
+
+| ไฟล์                                                      | เนื้อหา                                                    |
+| --------------------------------------------------------- | ---------------------------------------------------------- |
+| [00-overview.md](docs/00-overview.md)                     | CI ฝั่งตรวจโค้ดคืออะไร ทำไมต้องมี ลำดับที่ควรเปิดใช้       |
+| [01-code-quality.md](docs/01-code-quality.md)             | ฟอร์แมต/lint/typecheck/test และเรื่อง SARIF                |
+| [02-secret-scanning.md](docs/02-secret-scanning.md)       | ค่าลับหลุดแล้วต้องทำอะไร push protection กฎที่เขียนเอง     |
+| [03-sast.md](docs/03-sast.md)                             | SAST ต่างจาก linter อย่างไร + บทเรียนจากการรันจริง         |
+| [04-sca.md](docs/04-sca.md)                               | ช่องโหว่ใน dependency การรับมือ Dependabot ที่เปิด PR ท่วม |
+| [05-container-scanning.md](docs/05-container-scanning.md) | Dockerfile ที่ดี และวิธีทำให้ image มีช่องโหว่ศูนย์รายการ  |
+| [06-alerts-and-gates.md](docs/06-alerts-and-gates.md)     | เลือกช่องทางแจ้งเตือน และอะไรควรบล็อกการ merge             |
