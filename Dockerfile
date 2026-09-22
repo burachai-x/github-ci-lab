@@ -1,48 +1,34 @@
 # syntax=docker/dockerfile:1
 
-# ---------- ด่านที่ 1: build ----------
-# ใช้ tag ที่ระบุเวอร์ชันชัดเจน (ไม่ใช้ :latest) เพื่อให้ build ซ้ำได้ผลเดิม
-FROM node:24.21.0-alpine AS build
+# ⚠️ Dockerfile นี้จงใจเขียนผิดหลักเพื่อสาธิตด่าน Container Scanning
+# ห้ามลอกไปใช้งานจริง — ของที่ถูกต้องอยู่ใน Dockerfile บน branch main
+
+# ปัญหา: ใช้ tag latest — build วันนี้กับพรุ่งนี้ได้คนละเวอร์ชัน สืบย้อนไม่ได้
+# และเป็น image เต็ม (ไม่ใช่ alpine/slim) จึงมีแพ็กเกจที่ไม่ได้ใช้ติดมาเป็นร้อย
+FROM node:latest
+
+# ปัญหา: ติดตั้งเครื่องมือเพิ่มโดยไม่ระบุเวอร์ชัน และไม่ล้าง cache ของ apt
+RUN apt-get update && apt-get install -y curl vim netcat-openbsd
 
 WORKDIR /app
 
-# คัดลอกเฉพาะ manifest ก่อน เพื่อให้ layer ของ dependency ถูก cache ไว้
-COPY package.json package-lock.json ./
-RUN npm ci
+# ปัญหา: ดึงไฟล์จากอินเทอร์เน็ตด้วย ADD ทุกครั้งที่ build โดยไม่ตรวจสอบอะไรเลย
+ADD https://raw.githubusercontent.com/burachai-x/github-ci-lab/main/README.md /app/README.md
 
-COPY tsconfig.json ./
-COPY src ./src
+# ปัญหา: copy ทุกอย่างเข้ามารวดเดียว ทำให้ cache ใช้ไม่ได้เลยเมื่อแก้โค้ดบรรทัดเดียว
+COPY . .
 
-# รวมคำสั่งที่ทำต่อเนื่องกันไว้ใน RUN เดียว จะได้ไม่เพิ่ม layer โดยไม่จำเป็น
-# (build เสร็จแล้วตัด devDependencies ออกให้เหลือเฉพาะของที่ต้องใช้ตอนรันจริง)
-RUN npm run build && npm prune --omit=dev
+# ปัญหา: ใช้ npm install แทน npm ci และติดตั้ง devDependencies ติดไปกับ image ที่จะ deploy
+RUN npm install
 
-# ---------- ด่านที่ 2: runtime ----------
-FROM node:24.21.0-alpine AS runtime
+RUN npm run build
 
+# ปัญหา: ฝังค่าลับไว้ใน image — ใครที่ pull image ไปได้ อ่านค่านี้ได้ด้วย docker history
+ENV API_TOKEN=gbt_live_3e91c5d7fa284b06e1d9a7c4b52f80e6
 ENV NODE_ENV=production
-
-# อัปเดตแพ็กเกจของระบบ แล้วถอด npm ออกจาก image ที่จะรันจริง
-#
-# ทำไมต้องถอด npm: ตอนรันเราเรียกแค่ `node dist/index.js` ไม่ได้ใช้ npm เลย
-# แต่ npm ที่ติดมากับ base image ลากไลบรารีของตัวเองมาด้วยหลายสิบตัว
-# ซึ่งมี CVE เป็นของตัวเอง กลายเป็นพื้นที่โจมตีที่เราไม่ได้ใช้ประโยชน์อะไรเลย
-RUN apk --no-cache upgrade \
-  && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
-
-WORKDIR /app
-
-# image ของ node มี user "node" (uid 1000) มาให้แล้ว — ใช้แทนการรันด้วย root
-COPY --chown=node:node --from=build /app/node_modules ./node_modules
-COPY --chown=node:node --from=build /app/dist ./dist
-COPY --chown=node:node package.json ./
-
-USER node
 
 EXPOSE 3000
 
-# ใช้รูปแบบ JSON (exec form) เสมอ เพื่อไม่ให้คำสั่งถูก shell ตีความซ้ำ
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-
-CMD ["node", "dist/index.js"]
+# ปัญหา: ไม่มีคำสั่ง USER — container จะรันด้วย root
+# ปัญหา: ใช้ CMD แบบ shell form ทำให้ signal (SIGTERM) ไปไม่ถึงโปรเซส Node
+CMD node dist/index.js
