@@ -74,9 +74,23 @@ jobs:
       # build ด้วย tag ที่ผูกกับ commit เพื่อให้รู้ชัดว่ากำลังตรวจ image ของโค้ดชุดไหน
       - name: build image
         id: build
+        continue-on-error: true
         run: |
-          docker build -t "${IMAGE_NAME}:${GITHUB_SHA}" .
-          docker image inspect "${IMAGE_NAME}:${GITHUB_SHA}" --format 'ขนาด image: {{.Size}} bytes / user ที่ใช้รัน: {{.Config.User}}'
+          # ลองใหม่ได้ถึง 3 ครั้ง เพราะขั้นตอน build ต้องดึงของจากอินเทอร์เน็ต
+          # (base image, apk index, npm registry) ซึ่งล้มด้วยเหตุชั่วคราวได้เสมอ
+          # ความล้มเหลวของเครือข่าย ไม่ใช่ความล้มเหลวของ "คุณภาพโค้ด" จึงไม่ควรตัดสินเท่ากัน
+          for attempt in 1 2 3; do
+            echo "::group::build ครั้งที่ ${attempt}"
+            if docker build -t "${IMAGE_NAME}:${GITHUB_SHA}" .; then
+              echo "::endgroup::"
+              docker image inspect "${IMAGE_NAME}:${GITHUB_SHA}" --format 'ขนาด image: {{.Size}} bytes / user ที่ใช้รัน: {{.Config.User}}'
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "build ไม่สำเร็จในครั้งที่ ${attempt}"
+            sleep $((attempt * 10))
+          done
+          exit 1
 
       # ตรวจว่า image รันด้วย root หรือเปล่า — ข้อนี้ไม่ใช่ CVE แต่เป็นเรื่องที่ทำให้
       # ช่องโหว่ทุกตัวใน container ร้ายแรงขึ้นทันที จึงบังคับเป็นกฎของเราเอง
@@ -197,6 +211,22 @@ jobs:
           fi
 
           FAILED=0
+
+          # ถ้า build ไม่สำเร็จ ขั้นตอนตรวจที่เหลือจะถูกข้ามทั้งหมด
+          # ต้องรายงานให้ตรงว่า "build ไม่ผ่าน" ไม่ใช่เหมาเอาว่าตรวจแล้วไม่ผ่าน
+          # (เคยรายงานผิดว่า image รันด้วย root ทั้งที่แค่ apk ดึง index ไม่ได้)
+          if [ "${{ steps.build.outcome }}" != "success" ]; then
+            {
+              echo "> [!CAUTION]"
+              echo "> **build image ไม่สำเร็จ** จึงยังไม่ได้ตรวจอะไรกับ image เลย"
+              echo ">"
+              echo "> ดูสาเหตุได้ที่ step \`build image\` — ถ้าเป็นปัญหาเครือข่ายชั่วคราว"
+              echo "> (ดึง base image / apk index / npm registry ไม่ได้) ให้กด Re-run job"
+              echo "> ถ้าเป็นเพราะโค้ดคอมไพล์ไม่ผ่าน ให้แก้ที่ต้นเหตุก่อน"
+              echo ""
+            } | tee -a report.md >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
           if [ "${{ steps.nonroot.outcome }}" != "success" ]; then
             {
